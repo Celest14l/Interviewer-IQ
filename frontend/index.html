@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>InterviewIQ — AI Interview Coach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --ink: #0a0a0f;
+    --paper: #f5f2eb;
+    --accent: #e8ff47;
+    --accent2: #ff6b35;
+    --muted: #6b6b7a;
+    --border: rgba(245,242,235,0.12);
+    --card-bg: rgba(245,242,235,0.04);
+  }
+
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    overflow-x: hidden;
+    cursor: none;
+  }
+
+  /* ── Custom cursor ── */
+  .cursor {
+    position: fixed; width: 10px; height: 10px;
+    background: var(--accent); border-radius: 50%;
+    pointer-events: none; z-index: 9999;
+    transform: translate(-50%,-50%);
+    transition: transform 0.1s, background 0.2s;
+    mix-blend-mode: difference;
+  }
+  .cursor-ring {
+    position: fixed; width: 36px; height: 36px;
+    border: 1px solid var(--accent);
+    border-radius: 50%; pointer-events: none;
+    z-index: 9998; transform: translate(-50%,-50%);
+    transition: transform 0.18s ease, width 0.2s, height 0.2s, border-color 0.2s;
+    mix-blend-mode: difference;
+  }
+  body:hover .cursor-ring { border-color: var(--accent); }
+
+  /* ── Noise overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 1;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+    pointer-events: none; opacity: 0.5;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.5rem 3rem;
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    background: rgba(10,10,15,0.7);
+  }
+  .nav-logo {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.6rem; letter-spacing: 0.12em;
+    color: var(--paper);
+    text-decoration: none;
+  }
+  .nav-logo span { color: var(--accent); }
+  .nav-links { display: flex; gap: 2.5rem; list-style: none; }
+  .nav-links a {
+    font-size: 0.82rem; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); text-decoration: none;
+    transition: color 0.2s;
+  }
+  .nav-links a:hover { color: var(--paper); }
+  .nav-cta {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem; letter-spacing: 0.06em;
+    padding: 0.55rem 1.4rem;
+    background: var(--accent); color: var(--ink);
+    border: none; cursor: none;
+    text-decoration: none; font-weight: 500;
+    transition: background 0.2s, transform 0.15s;
+  }
+  .nav-cta:hover { background: #fff; transform: translateY(-1px); }
+
+  /* ── HERO ── */
+  .hero {
+    min-height: 100vh; padding: 8rem 3rem 4rem;
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 4rem; align-items: center; position: relative;
+  }
+
+  /* Animated grid bg */
+  .hero-grid {
+    position: absolute; inset: 0; overflow: hidden; z-index: 0;
+  }
+  .hero-grid svg { width: 100%; height: 100%; opacity: 0.06; }
+
+  /* Glowing orb */
+  .orb {
+    position: absolute; width: 600px; height: 600px;
+    top: -100px; right: -100px;
+    background: radial-gradient(circle, rgba(232,255,71,0.15) 0%, transparent 70%);
+    border-radius: 50%; pointer-events: none; z-index: 0;
+    animation: orbPulse 6s ease-in-out infinite;
+  }
+  @keyframes orbPulse {
+    0%,100% { transform: scale(1); opacity: 0.6; }
+    50% { transform: scale(1.1); opacity: 1; }
+  }
+
+  .hero-content { position: relative; z-index: 2; }
+
+  .hero-tag {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem; letter-spacing: 0.1em;
+    color: var(--accent); text-transform: uppercase;
+    border: 1px solid rgba(232,255,71,0.3);
+    padding: 0.35rem 0.9rem;
+    margin-bottom: 2rem;
+    animation: fadeUp 0.6s ease both;
+  }
+  .hero-tag::before {
+    content: ''; width: 6px; height: 6px;
+    background: var(--accent); border-radius: 50%;
+    animation: blink 1.5s step-end infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(4rem, 8vw, 7.5rem);
+    line-height: 0.92; letter-spacing: 0.02em;
+    animation: fadeUp 0.7s 0.1s ease both;
+  }
+  h1 .line2 { color: var(--accent); display: block; }
+  h1 .line3 {
+    color: transparent;
+    -webkit-text-stroke: 1px rgba(245,242,235,0.4);
+    display: block;
+  }
+
+  .hero-sub {
+    margin-top: 2rem; max-width: 440px;
+    font-size: 1.05rem; line-height: 1.7;
+    color: rgba(245,242,235,0.6);
+    animation: fadeUp 0.7s 0.2s ease both;
+  }
+
+  .hero-actions {
+    margin-top: 2.5rem; display: flex; gap: 1rem; align-items: center;
+    animation: fadeUp 0.7s 0.3s ease both;
+  }
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 0.6rem;
+    font-family: 'DM Mono', monospace; font-size: 0.85rem;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 1rem 2rem;
+    background: var(--accent); color: var(--ink); font-weight: 500;
+    text-decoration: none; border: none; cursor: none;
+    position: relative; overflow: hidden;
+    transition: transform 0.15s;
+  }
+  .btn-primary::after {
+    content: ''; position: absolute; inset: 0;
+    background: var(--ink); transform: translateX(-101%);
+    transition: transform 0.3s ease;
+  }
+  .btn-primary:hover::after { transform: translateX(0); }
+  .btn-primary:hover { color: var(--accent); }
+  .btn-primary span, .btn-primary svg { position: relative; z-index: 1; }
+  .btn-primary:hover { transform: translateY(-2px); }
+
+  .btn-ghost {
+    font-family: 'DM Mono', monospace; font-size: 0.82rem;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 1rem 1.8rem; color: var(--paper);
+    border: 1px solid var(--border); text-decoration: none;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .btn-ghost:hover { border-color: var(--paper); color: var(--paper); }
+
+  /* Hero visual side */
+  .hero-visual { position: relative; z-index: 2; }
+  .interview-mock {
+    background: rgba(245,242,235,0.04);
+    border: 1px solid var(--border);
+    padding: 1.5rem;
+    animation: fadeUp 0.8s 0.4s ease both;
+  }
+  .mock-header {
+    display: flex; align-items: center; gap: 0.6rem;
+    margin-bottom: 1rem; padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; }
+  .dot.y { background: #febc2e; }
+  .dot.g { background: #28c840; }
+  .mock-title {
+    margin-left: auto; font-family: 'DM Mono', monospace;
+    font-size: 0.72rem; color: var(--muted); letter-spacing: 0.08em;
+  }
+  .mock-cam {
+    aspect-ratio: 16/10; background: #0d0d14;
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+    margin-bottom: 1rem;
+  }
+  .cam-person {
+    width: 80px; height: 80px; border-radius: 50%;
+    background: linear-gradient(135deg, #1a1a2e, #2d2d44);
+    border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.5rem;
+  }
+  .cam-overlay {
+    position: absolute; bottom: 0.8rem; left: 0.8rem; right: 0.8rem;
+    display: flex; justify-content: space-between; align-items: flex-end;
+  }
+  .emotion-badge {
+    font-family: 'DM Mono', monospace; font-size: 0.65rem;
+    padding: 0.3rem 0.6rem;
+    background: rgba(232,255,71,0.15);
+    border: 1px solid rgba(232,255,71,0.4);
+    color: var(--accent); letter-spacing: 0.06em;
+  }
+  .score-badges { display: flex; gap: 0.4rem; }
+  .score-badge {
+    font-family: 'DM Mono', monospace; font-size: 0.6rem;
+    padding: 0.25rem 0.5rem;
+    background: rgba(245,242,235,0.08);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .score-badge strong { color: var(--paper); }
+
+  /* Waveform animation */
+  .waveform {
+    display: flex; align-items: center; gap: 2px;
+    height: 24px;
+  }
+  .wave-bar {
+    width: 3px; background: var(--accent); border-radius: 2px;
+    animation: wave 1s ease-in-out infinite;
+  }
+  .wave-bar:nth-child(1) { animation-delay: 0s; height: 40%; }
+  .wave-bar:nth-child(2) { animation-delay: 0.1s; height: 80%; }
+  .wave-bar:nth-child(3) { animation-delay: 0.2s; height: 60%; }
+  .wave-bar:nth-child(4) { animation-delay: 0.3s; height: 100%; }
+  .wave-bar:nth-child(5) { animation-delay: 0.4s; height: 70%; }
+  .wave-bar:nth-child(6) { animation-delay: 0.5s; height: 40%; }
+  .wave-bar:nth-child(7) { animation-delay: 0.6s; height: 90%; }
+  @keyframes wave {
+    0%,100% { transform: scaleY(0.4); }
+    50% { transform: scaleY(1); }
+  }
+
+  .mock-question {
+    font-size: 0.85rem; line-height: 1.6;
+    color: rgba(245,242,235,0.75); margin-bottom: 0.8rem;
+  }
+  .mock-question strong { color: var(--paper); font-weight: 500; }
+
+  .mock-metrics {
+    display: grid; grid-template-columns: repeat(3,1fr); gap: 0.5rem;
+  }
+  .metric {
+    background: rgba(245,242,235,0.03);
+    border: 1px solid var(--border);
+    padding: 0.6rem; text-align: center;
+  }
+  .metric-val {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.6rem; color: var(--accent); letter-spacing: 0.05em;
+    display: block;
+  }
+  .metric-lbl {
+    font-size: 0.62rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+
+  /* Ticker */
+  .ticker-wrap {
+    position: absolute; bottom: 1.5rem; left: 0; right: 0;
+    overflow: hidden; z-index: 2;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 0;
+  }
+  .ticker {
+    display: flex; gap: 4rem;
+    animation: ticker 30s linear infinite;
+    white-space: nowrap;
+  }
+  .ticker span {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem; color: var(--muted);
+    letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .ticker span::before { content: '✦ '; color: var(--accent); }
+  @keyframes ticker {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── STATS BAND ── */
+  .stats-band {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 2.5rem 3rem;
+    display: grid; grid-template-columns: repeat(4,1fr);
+    position: relative; z-index: 2;
+  }
+  .stat-item {
+    padding: 0 2rem; text-align: center;
+    border-right: 1px solid var(--border);
+  }
+  .stat-item:first-child { padding-left: 0; }
+  .stat-item:last-child { border-right: none; }
+  .stat-num {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 3.5rem; color: var(--accent); letter-spacing: 0.05em;
+    line-height: 1; display: block;
+  }
+  .stat-desc { font-size: 0.8rem; color: var(--muted); margin-top: 0.4rem; }
+
+  /* ── HOW IT WORKS ── */
+  .section { padding: 7rem 3rem; position: relative; z-index: 2; }
+  .section-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 1rem;
+  }
+  .section-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(2.5rem, 5vw, 4.5rem);
+    line-height: 1; letter-spacing: 0.03em;
+    margin-bottom: 3rem;
+  }
+
+  .steps {
+    display: grid; grid-template-columns: repeat(5,1fr); gap: 0;
+  }
+  .step {
+    padding: 2rem 1.5rem;
+    border-right: 1px solid var(--border);
+    position: relative;
+  }
+  .step:last-child { border-right: none; }
+  .step-num {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 4rem; color: rgba(245,242,235,0.06);
+    line-height: 1; margin-bottom: 0.5rem;
+  }
+  .step-icon {
+    width: 44px; height: 44px;
+    background: rgba(232,255,71,0.1);
+    border: 1px solid rgba(232,255,71,0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem; margin-bottom: 1rem;
+  }
+  .step h3 {
+    font-size: 0.9rem; font-weight: 500; letter-spacing: 0.03em;
+    margin-bottom: 0.6rem;
+  }
+  .step p { font-size: 0.8rem; color: var(--muted); line-height: 1.6; }
+
+  /* ── FEATURES ── */
+  .features-grid {
+    display: grid; grid-template-columns: repeat(3,1fr); gap: 1px;
+    background: var(--border); border: 1px solid var(--border);
+  }
+  .feature {
+    background: var(--ink); padding: 2.5rem;
+    transition: background 0.2s;
+    cursor: none;
+  }
+  .feature:hover { background: rgba(245,242,235,0.04); }
+  .feature-icon {
+    font-size: 2rem; margin-bottom: 1.2rem; display: block;
+  }
+  .feature h3 {
+    font-size: 1rem; font-weight: 500; margin-bottom: 0.6rem;
+    letter-spacing: 0.02em;
+  }
+  .feature p { font-size: 0.83rem; color: var(--muted); line-height: 1.65; }
+  .feature-tag {
+    display: inline-block; margin-top: 1rem;
+    font-family: 'DM Mono', monospace; font-size: 0.65rem;
+    padding: 0.25rem 0.6rem; letter-spacing: 0.06em;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+
+  /* ── PERSONAS ── */
+  .personas-grid {
+    display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem;
+    margin-top: 2rem;
+  }
+  .persona-card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    padding: 1.8rem 1.5rem;
+    transition: border-color 0.2s, transform 0.2s;
+    cursor: none;
+  }
+  .persona-card:hover {
+    border-color: rgba(232,255,71,0.4); transform: translateY(-4px);
+  }
+  .persona-emoji { font-size: 2.2rem; display: block; margin-bottom: 1rem; }
+  .persona-name {
+    font-size: 0.95rem; font-weight: 500; margin-bottom: 0.4rem;
+  }
+  .persona-desc { font-size: 0.78rem; color: var(--muted); line-height: 1.6; }
+  .persona-tag {
+    display: inline-block; margin-top: 1rem;
+    font-family: 'DM Mono', monospace; font-size: 0.62rem;
+    padding: 0.2rem 0.5rem;
+    background: rgba(232,255,71,0.1);
+    color: var(--accent); letter-spacing: 0.08em;
+  }
+
+  /* ── CTA SECTION ── */
+  .cta-section {
+    padding: 8rem 3rem;
+    text-align: center;
+    position: relative; z-index: 2;
+    border-top: 1px solid var(--border);
+  }
+  .cta-section h2 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(3rem, 7vw, 6.5rem);
+    line-height: 0.95; letter-spacing: 0.02em;
+    margin-bottom: 1.5rem;
+  }
+  .cta-section h2 em {
+    font-style: normal; color: var(--accent);
+  }
+  .cta-section p {
+    font-size: 1rem; color: var(--muted); max-width: 500px;
+    margin: 0 auto 2.5rem; line-height: 1.7;
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem 3rem;
+    display: flex; align-items: center; justify-content: space-between;
+    position: relative; z-index: 2;
+  }
+  footer .logo {
+    font-family: 'Bebas Neue', sans-serif; font-size: 1.2rem;
+    color: var(--paper); letter-spacing: 0.12em;
+  }
+  footer .logo span { color: var(--accent); }
+  footer p {
+    font-size: 0.75rem; color: var(--muted);
+    font-family: 'DM Mono', monospace; letter-spacing: 0.06em;
+  }
+  .footer-team {
+    font-size: 0.72rem; color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    text-align: right; line-height: 1.8;
+  }
+
+  /* ── Scroll reveal ── */
+  .reveal {
+    opacity: 0; transform: translateY(30px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+  .reveal.visible {
+    opacity: 1; transform: translateY(0);
+  }
+</style>
+</head>
+<body>
+
+<div class="cursor" id="cursor"></div>
+<div class="cursor-ring" id="cursorRing"></div>
+
+<!-- NAV -->
+<nav>
+  <a href="index.html" class="nav-logo">Interview<span>IQ</span></a>
+  <ul class="nav-links">
+    <li><a href="#how">How it Works</a></li>
+    <li><a href="#features">Features</a></li>
+    <li><a href="#personas">Personas</a></li>
+  </ul>
+  <a href="interview.html" class="nav-cta">Start Interview →</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid">
+    <svg viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+          <path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(245,242,235,1)" stroke-width="0.5"/>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#grid)"/>
+    </svg>
+  </div>
+  <div class="orb"></div>
+
+  <div class="hero-content">
+    <div class="hero-tag">AI Interview Coach · Beta</div>
+    <h1>
+      ACE YOUR
+      <span class="line2">NEXT</span>
+      <span class="line3">INTERVIEW</span>
+    </h1>
+    <p class="hero-sub">
+      Multimodal AI that analyses your speech, facial cues, and body language in real-time — then coaches you to land the role.
+    </p>
+    <div class="hero-actions">
+      <a href="interview.html" class="btn-primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <span>Start Mock Interview</span>
+      </a>
+      <a href="#how" class="btn-ghost">How it works</a>
+    </div>
+  </div>
+
+  <div class="hero-visual">
+    <div class="interview-mock">
+      <div class="mock-header">
+        <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+        <span class="mock-title">LIVE SESSION · 04:32</span>
+      </div>
+      <div class="mock-cam">
+        <div class="cam-person">🧑‍💼</div>
+        <div class="cam-overlay">
+          <div class="emotion-badge">😌 CONFIDENT · 82%</div>
+          <div class="score-badges">
+            <div class="score-badge">👁 <strong>8.2</strong></div>
+            <div class="score-badge">🧍 <strong>7.5</strong></div>
+          </div>
+        </div>
+      </div>
+      <div class="mock-question">
+        <strong>AI Interviewer:</strong> "Tell me about a time you had to debug a complex production issue under pressure — what was your process?"
+      </div>
+      <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1rem;">
+        <div class="waveform">
+          <div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div>
+        </div>
+        <span style="font-family:'DM Mono',monospace;font-size:0.68rem;color:var(--muted);">Recording · 0:14</span>
+      </div>
+      <div class="mock-metrics">
+        <div class="metric">
+          <span class="metric-val">7.8</span>
+          <span class="metric-lbl">Content</span>
+        </div>
+        <div class="metric">
+          <span class="metric-val">138</span>
+          <span class="metric-lbl">WPM</span>
+        </div>
+        <div class="metric">
+          <span class="metric-val">82%</span>
+          <span class="metric-lbl">Eye Contact</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ticker-wrap">
+    <div class="ticker">
+      <span>Resume-aware questions</span>
+      <span>Real-time emotion detection</span>
+      <span>Gaze tracking</span>
+      <span>Posture analysis</span>
+      <span>SWOT coaching report</span>
+      <span>4 AI personas</span>
+      <span>Hinglish support</span>
+      <span>Campus placement ready</span>
+      <!-- duplicate for seamless loop -->
+      <span>Resume-aware questions</span>
+      <span>Real-time emotion detection</span>
+      <span>Gaze tracking</span>
+      <span>Posture analysis</span>
+      <span>SWOT coaching report</span>
+      <span>4 AI personas</span>
+      <span>Hinglish support</span>
+      <span>Campus placement ready</span>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-band reveal">
+  <div class="stat-item">
+    <span class="stat-num">55%</span>
+    <div class="stat-desc">of interview outcome determined by body language & tone</div>
+  </div>
+  <div class="stat-item">
+    <span class="stat-num">8</span>
+    <div class="stat-desc">personalised questions generated from your resume</div>
+  </div>
+  <div class="stat-item">
+    <span class="stat-num">7</span>
+    <div class="stat-desc">scoring dimensions analysed simultaneously</div>
+  </div>
+  <div class="stat-item">
+    <span class="stat-num">4</span>
+    <div class="stat-desc">AI interviewer personas to train with</div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section class="section" id="how">
+  <div class="section-label">Process</div>
+  <div class="section-title reveal">HOW IT<br>WORKS</div>
+  <div class="steps reveal">
+    <div class="step">
+      <div class="step-num">01</div>
+      <div class="step-icon">📄</div>
+      <h3>Upload Resume</h3>
+      <p>Drop your PDF resume. AI extracts your skills, projects, and experience to craft personalised questions.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">02</div>
+      <div class="step-icon">🎭</div>
+      <h3>Pick a Persona</h3>
+      <p>Choose your interviewer — Friendly HR, Strict Technical, Stress Tester, or Campus Panel.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">03</div>
+      <div class="step-icon">🎙️</div>
+      <h3>Live Interview</h3>
+      <p>Answer questions aloud. Camera captures face snapshots every 4 seconds. No constant streaming.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">04</div>
+      <div class="step-icon">📊</div>
+      <h3>Real-time Scores</h3>
+      <p>See emotion, gaze, posture, and answer quality scored live as you speak.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">05</div>
+      <div class="step-icon">🏆</div>
+      <h3>SWOT Report</h3>
+      <p>Get a personalised strengths/weaknesses breakdown with a targeted coaching roadmap.</p>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="section" id="features" style="padding-top:0;">
+  <div class="section-label">Capabilities</div>
+  <div class="section-title reveal">WHAT WE<br>ANALYSE</div>
+  <div class="features-grid reveal">
+    <div class="feature">
+      <span class="feature-icon">😶</span>
+      <h3>Emotion Detection</h3>
+      <p>DeepFace identifies 7 emotions — confidence, anxiety, neutral, happy, surprise, fear, disgust — from snapshots taken every 3-5 seconds.</p>
+      <span class="feature-tag">DeepFace · CV</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">👁️</span>
+      <h3>Gaze Tracking</h3>
+      <p>MediaPipe iris landmarks track whether you're looking at the camera (simulating eye contact with the interviewer).</p>
+      <span class="feature-tag">MediaPipe · 468 landmarks</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🧍</span>
+      <h3>Posture Analysis</h3>
+      <p>Shoulder alignment, head tilt, and slouch detection via full-body pose estimation. Sit straight, score higher.</p>
+      <span class="feature-tag">MediaPipe Pose</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🎤</span>
+      <h3>Speech Analytics</h3>
+      <p>Words-per-minute, filler word detection (umm, like, basically), pause frequency, and vocal rhythm scoring.</p>
+      <span class="feature-tag">Web Speech API · Librosa</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🧠</span>
+      <h3>Answer Quality</h3>
+      <p>Claude evaluates content relevance, clarity, structure, and depth — scored on a 10-point scale per answer.</p>
+      <span class="feature-tag">Claude · LLM</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">📋</span>
+      <h3>Resume Intelligence</h3>
+      <p>RAG-powered resume parsing extracts skills, projects, and experience — questions are tailored specifically to you.</p>
+      <span class="feature-tag">LangChain · PyPDF2</span>
+    </div>
+  </div>
+</section>
+
+<!-- PERSONAS -->
+<section class="section" id="personas">
+  <div class="section-label">Interviewers</div>
+  <div class="section-title reveal">CHOOSE YOUR<br>CHALLENGE</div>
+  <div class="personas-grid reveal">
+    <div class="persona-card">
+      <span class="persona-emoji">😊</span>
+      <div class="persona-name">Friendly HR</div>
+      <p class="persona-desc">Warm, encouraging, campus-placement style. Perfect for first-timers building confidence.</p>
+      <span class="persona-tag">BEGINNER FRIENDLY</span>
+    </div>
+    <div class="persona-card">
+      <span class="persona-emoji">🔬</span>
+      <div class="persona-name">Strict Technical</div>
+      <p class="persona-desc">Demands precision. Digs deep into implementation, system design, and complexity.</p>
+      <span class="persona-tag">ADVANCED</span>
+    </div>
+    <div class="persona-card">
+      <span class="persona-emoji">⚡</span>
+      <div class="persona-name">Stress Tester</div>
+      <p class="persona-desc">Rapid-fire questions, mild challenges, pressure simulation. Train your composure.</p>
+      <span class="persona-tag">HIGH PRESSURE</span>
+    </div>
+    <div class="persona-card">
+      <span class="persona-emoji">🏛️</span>
+      <div class="persona-name">Campus Panel</div>
+      <p class="persona-desc">3-person panel, formal evaluation. Technical + behavioural + cultural fit.</p>
+      <span class="persona-tag">CAMPUS PLACEMENT</span>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <h2 reveal>READY TO<br><em>LEVEL UP?</em></h2>
+  <p>Upload your resume, pick a persona, and start your first mock interview in under 60 seconds.</p>
+  <a href="interview.html" class="btn-primary" style="display:inline-flex;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    <span>Start Mock Interview</span>
+  </a>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="logo">Interview<span>IQ</span></div>
+  <p>© 2025 InterviewIQ · AI-Powered Interview Coach</p>
+  <div class="footer-team">
+    Priyanshu Singh · Ranveer Singh · Nidhi Pandit<br>
+    <span style="color:rgba(107,107,122,0.6);font-size:0.65rem;">23070126097 · 23070126102 · 23070126081</span>
+  </div>
+</footer>
+
+<script>
+// Custom cursor
+const cursor = document.getElementById('cursor');
+const ring = document.getElementById('cursorRing');
+let mx=0,my=0,rx=0,ry=0;
+document.addEventListener('mousemove',e=>{
+  mx=e.clientX; my=e.clientY;
+  cursor.style.left=mx+'px'; cursor.style.top=my+'px';
+});
+function animRing(){
+  rx+=(mx-rx)*0.12; ry+=(my-ry)*0.12;
+  ring.style.left=rx+'px'; ring.style.top=ry+'px';
+  requestAnimationFrame(animRing);
+}
+animRing();
+
+// Scroll reveal
+const revealEls = document.querySelectorAll('.reveal');
+const observer = new IntersectionObserver(entries=>{
+  entries.forEach(e=>{ if(e.isIntersecting) e.target.classList.add('visible'); });
+},{threshold:0.1});
+revealEls.forEach(el=>observer.observe(el));
+</script>
+</body>
+</html>

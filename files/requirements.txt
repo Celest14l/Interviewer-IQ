@@ -1,0 +1,29 @@
+# InterviewIQ Backend Requirements
+# Install with: pip install -r requirements.txt
+
+# ── Web framework ──────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9       # for UploadFile / Form
+
+# ── HTTP client (async Anthropic calls) ───────────────────────────────────
+httpx==0.27.0
+
+# ── PDF parsing ────────────────────────────────────────────────────────────
+PyPDF2==3.0.1
+
+# ── Face / vision analysis ────────────────────────────────────────────────
+deepface==0.0.93              # emotion detection
+mediapipe==0.10.14            # gaze + posture landmarks
+opencv-python-headless==4.10.0.84   # image decoding (headless = no GUI)
+numpy==1.26.4
+
+# ── Audio analysis (optional, for future Librosa integration) ─────────────
+# librosa==0.10.2
+# soundfile==0.12.1
+
+# ── Data validation ────────────────────────────────────────────────────────
+pydantic==2.7.1
+
+# ── (Optional) Firebase for production persistence ────────────────────────
+# firebase-admin==6.5.0
