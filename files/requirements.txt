@@ -14,7 +14,7 @@ PyPDF2==3.0.1
 
 # ── Face / vision analysis ────────────────────────────────────────────────
 deepface==0.0.93              # emotion detection
-mediapipe==0.10.14            # gaze + posture landmarks
+mediapipe>=0.10.14            # gaze + posture landmarks
 opencv-python-headless==4.10.0.84   # image decoding (headless = no GUI)
 numpy==1.26.4
 
@@ -23,7 +23,7 @@ numpy==1.26.4
 # soundfile==0.12.1
 
 # ── Data validation ────────────────────────────────────────────────────────
-pydantic==2.7.1
+pydantic>=2.7.1
 
 # ── (Optional) Firebase for production persistence ────────────────────────
 # firebase-admin==6.5.0
