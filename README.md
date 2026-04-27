@@ -1,246 +1,289 @@
-# InterviewIQ — Backend
+# InterviewIQ — AI Interview Coach
 
-FastAPI backend for the InterviewIQ AI Interview Coach.
-Provides REST + WebSocket APIs for your HTML frontend.
+InterviewIQ is a production-oriented AI interview coaching platform. Candidates upload their resume, conduct a live voice interview with an adaptive AI interviewer, and receive a detailed performance report with scores and coaching tips.
+
+---
+
+## Features
+
+- **Real user accounts** — sign up, log in, and own your interviews
+- **Resume-grounded interviews** — Gemini analyses your resume and builds a structured interview blueprint with primary questions, follow-up probes, and challenge probes
+- **Adaptive live interview** — the AI interviewer decides whether to follow up, challenge, clarify, switch topics, or wrap based on your answers
+- **Voice-first** — speak your answers; Groq Whisper transcribes them in real time and Cartesia voices the interviewer
+- **Non-verbal analytics** — optional face-snapshot analysis (emotion, gaze, posture) via DeepFace and MediaPipe
+- **SWOT report** — final report with per-answer scores, dimension breakdowns, strengths, weaknesses, opportunities, threats, and coaching tips
 
 ---
 
 ## Architecture Overview
 
 ```
-Frontend (HTML/JS)
+Browser (frontend/index.html, frontend/interview.html)
       │
-      ├── POST /api/interview/start          → Upload resume, get session_id + questions
-      ├── GET  /api/interview/{id}/open      → Get opening AI message
+      ├── POST /api/auth/signup|login|logout   → User authentication
+      ├── POST /api/interviews/bootstrap       → Upload resume → persisted interview + blueprint
       │
-      ├── POST /api/interview/{id}/message   → Send candidate text, get AI reply (HTTP mode)
-      │   OR
-      ├── WS   /ws/interview/{id}            → Live bidirectional interview (WebSocket mode)
+      ├── WS   /api/realtime/{interview_id}    → Live bidirectional interview
+      │         ├── user_text / user_audio     →  candidate turn (text or base64 audio)
+      │         ├── ai_reply                   ← interviewer text + audio URL
+      │         └── end_interview              → triggers report synthesis
       │
-      ├── POST /api/analysis/snapshot        → Face snapshot every 3-5 s (base64 JPEG)
-      ├── POST /api/analysis/audio-score     → Submit WPM / filler word stats
+      ├── POST /api/analysis/snapshot          → Face snapshot (base64 JPEG) every ~4 s
+      ├── POST /api/audio/transcribe           → STT (Groq Whisper)
+      ├── GET  /api/audio/synthesize           → TTS audio download (Cartesia)
       │
-      ├── POST /api/interview/{id}/end       → Finalize, generate SWOT report
-      └── GET  /api/session/{id}/report      → Retrieve full report
+      ├── GET  /api/interviews/{id}/scores     → Per-answer score breakdown
+      └── GET  /api/interviews/{id}/report     → Full SWOT report
 ```
+
+---
+
+## Tech Stack
+
+### Backend
+
+| Layer | Technology |
+|---|---|
+| Framework | FastAPI 0.111 |
+| Database | PostgreSQL (SQLAlchemy + Alembic) |
+| Cache / Realtime coordination | Redis |
+| Auth | JWT (HS256) + bcrypt |
+
+### AI / Speech Providers
+
+| Role | Provider / Model |
+|---|---|
+| Adaptive reasoning (blueprint, turn analysis, scoring) | Gemini `gemini-2.5-flash` |
+| High-trust async evaluation (final report) | Gemini `gemini-2.5-pro` |
+| Live interviewer surface | NVIDIA NIM `nvidia/nemotron-mini-4b-instruct` |
+| Speech-to-Text | Groq `whisper-large-v3-turbo` |
+| Text-to-Speech | Cartesia `sonic-3` |
+| Content moderation | NVIDIA NIM `nvidia/llama-3.1-nemotron-safety-guard-8b-v3` |
+
+### Face Analytics (optional)
+
+- **Emotion** — DeepFace (7 classes: happy, sad, fear, angry, disgust, surprise, neutral)
+- **Gaze** — MediaPipe iris landmarks (eye-contact proxy)
+- **Posture** — MediaPipe pose (shoulder tilt + slouch detection)
+
+If DeepFace or MediaPipe are not installed the analyzer returns neutral fallback scores (5/10) and the interview continues normally.
+
+### Frontend
+
+- Plain HTML + JavaScript (`frontend/index.html`, `frontend/interview.html`)
+- No build step required
 
 ---
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Clone and create a virtual environment
 
 ```bash
+git clone https://github.com/Celest14l/Interviewer-IQ.git
+cd Interviewer-IQ/files
 python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Set environment variable
+### 2. Create a `.env` file
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+cp .env.example .env   # or create .env manually
 ```
 
-### 3. Run
+Fill in the required values (see [Environment Variables](#environment-variables) below).
+
+### 3. Run database migrations
 
 ```bash
-uvicorn main:app --reload --port 8000
+alembic upgrade head
 ```
 
-API docs: http://localhost:8000/docs
+### 4. Start the backend
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+Interactive API docs: http://localhost:8000/docs
+
+### 5. Open the frontend
+
+Serve `frontend/` with any static file server, for example:
+
+```bash
+cd ../frontend
+python -m http.server 5500
+```
+
+Then open http://localhost:5500 in your browser.
 
 ---
 
-## Key Design Decisions
-
-### ✅ Snapshots instead of video streaming
-
-The frontend captures a JPEG snapshot from the webcam **every 3-5 seconds** and POSTs it to:
+## Repository Structure
 
 ```
-POST /api/analysis/snapshot
-{ "session_id": "...", "image": "<base64-jpeg>" }
+Interviewer-IQ/
+├── frontend/
+│   ├── index.html          # Landing / setup screen
+│   └── interview.html      # Live interview page
+├── files/
+│   ├── app/
+│   │   ├── main.py         # FastAPI application factory
+│   │   ├── core/           # Settings, security helpers
+│   │   ├── db/             # SQLAlchemy engine, session, ORM models, Alembic
+│   │   ├── api/
+│   │   │   └── routers/    # auth, interviews, realtime, analysis, audio, health
+│   │   ├── services/       # Deterministic business logic
+│   │   ├── agents/         # Bounded agentic modules (blueprint, turn analysis, scoring)
+│   │   ├── providers/      # Gemini, NVIDIA NIM, Groq, Cartesia adapters
+│   │   └── schemas/        # Pydantic request / response schemas
+│   ├── migrations/         # Alembic migration scripts
+│   ├── requirements.txt
+│   └── main.py             # Top-level entrypoint (delegates to app/)
+└── docs/
+    ├── IMPLEMENTATION_TRACKER.md
+    └── IMPLEMENTATION_PROGRESS.md
 ```
-
-This is far more bandwidth-efficient than streaming video and works over any connection.
-Each snapshot is analysed for:
-- **Emotion** (DeepFace: 7 classes — happy, sad, fear, angry, disgust, surprise, neutral)
-- **Gaze** (MediaPipe iris landmarks — how centred the eyes are = eye contact proxy)
-- **Posture** (MediaPipe pose — shoulder tilt + slouch detection)
-
-Results are persisted per session and aggregated into the final report.
-
-### ✅ Graceful degradation
-
-If `deepface` or `mediapipe` are not installed, the analyzer returns neutral heuristic scores (5/10) instead of crashing. The interview still works — you just won't have face analytics.
-
-### ✅ HTTP + WebSocket modes
-
-- **Simple HTML frontend**: Use the REST endpoints (`/message`, `/snapshot`)
-- **Advanced frontend**: Use the WebSocket at `/ws/interview/{session_id}` for lower latency
 
 ---
 
 ## API Reference
 
-### POST `/api/interview/start`
+### Auth
 
-| Field    | Type   | Description                                    |
-|----------|--------|------------------------------------------------|
-| resume   | File   | PDF resume (max 5 MB)                          |
-| persona  | string | `friendly_hr` / `strict_technical` / `stress_interviewer` / `placement_panel` |
-| role     | string | Job role (e.g., "Software Engineer")           |
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/auth/signup` | Create a new account |
+| POST | `/api/auth/login` | Log in, receive JWT |
+| POST | `/api/auth/logout` | Invalidate session |
 
-**Response:**
+### Interviews
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/interviews/bootstrap` | Upload resume PDF → create interview + blueprint |
+| GET | `/api/interviews/` | List current user's interviews |
+| GET | `/api/interviews/{id}/scores` | Per-answer score breakdown |
+| GET | `/api/interviews/{id}/report` | Full SWOT report |
+
+**Bootstrap request (multipart/form-data):**
+
+| Field | Type | Description |
+|---|---|---|
+| `resume` | File | PDF resume (max 5 MB) |
+| `role` | string | Target job role (e.g. `"Software Engineer"`) |
+| `persona` | string | `friendly_hr` / `strict_technical` / `stress_interviewer` / `placement_panel` |
+
+**Bootstrap response:**
 ```json
 {
-  "session_id": "uuid",
-  "parsed_resume": { "name": "...", "skills": [...], ... },
-  "questions": ["Q1", "Q2", ...],
-  "ws_url": "/ws/interview/uuid"
+  "interview_id": "uuid",
+  "ws_url": "/api/realtime/uuid"
 }
 ```
 
----
+### Realtime WebSocket
 
-### POST `/api/interview/{session_id}/message`
-
-```json
-{ "text": "I worked on a distributed caching system using Redis..." }
-```
-
-**Response:**
-```json
-{ "text": "Interesting! How did you handle cache invalidation?", "question_index": 2, "done": false }
-```
-
----
-
-### POST `/api/analysis/snapshot`
-
-```json
-{
-  "session_id": "uuid",
-  "image": "data:image/jpeg;base64,/9j/4AAQ..."
-}
-```
-
-**Response:**
-```json
-{
-  "emotion": "confident",
-  "emotion_confidence": 7.2,
-  "gaze_score": 8.1,
-  "posture_score": 6.5,
-  "feedback": "Looking great — keep it up!"
-}
-```
-
-Call this every **3-5 seconds** from your frontend JavaScript:
-
-```js
-async function sendSnapshot() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 320; canvas.height = 240;
-  canvas.getContext('2d').drawImage(videoElement, 0, 0, 320, 240);
-  const b64 = canvas.toDataURL('image/jpeg', 0.7);
-
-  await fetch('http://localhost:8000/api/analysis/snapshot', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, image: b64 })
-  });
-}
-
-setInterval(sendSnapshot, 4000);   // every 4 seconds
-```
-
----
-
-### POST `/api/interview/{session_id}/end`
-
-Finalizes the interview and generates the SWOT report.
-
----
-
-### GET `/api/session/{session_id}/report`
-
-Returns the full report:
-```json
-{
-  "scores": {
-    "content": 7.2,
-    "clarity": 6.8,
-    "structure": 7.0,
-    "eye_contact": 8.1,
-    "emotion": 7.5,
-    "posture": 6.5,
-    "final": 7.2
-  },
-  "dominant_emotion": "neutral",
-  "swot": {
-    "strengths": [...],
-    "weaknesses": [...],
-    "opportunities": [...],
-    "threats": [...],
-    "coaching_tips": [...]
-  },
-  "qa_breakdown": [...]
-}
-```
-
----
-
-## WebSocket Protocol
-
-Connect to `ws://localhost:8000/ws/interview/{session_id}`
+Connect to `ws://localhost:8000/api/realtime/{interview_id}?token=<jwt>`
 
 **Client → Server:**
 ```json
-{ "type": "user_message", "text": "My answer here" }
-{ "type": "snapshot", "data": "<base64-jpeg>" }
+{ "type": "user_text",   "text": "My answer here" }
+{ "type": "user_audio",  "data": "<base64-wav>" }
+{ "type": "snapshot",    "data": "<base64-jpeg>" }
 { "type": "end_interview" }
 ```
 
 **Server → Client:**
 ```json
-{ "type": "ai_reply", "text": "...", "question_index": 2, "done": false }
-{ "type": "snapshot_result", "emotion": "...", "gaze_score": 8.1, "posture_score": 7.2, "feedback": "..." }
-{ "type": "session_ended", "report_url": "/api/session/{id}/report" }
+{ "type": "ai_reply",        "text": "...", "audio_url": "/api/audio/synthesize?..." }
+{ "type": "snapshot_result", "emotion": "neutral", "gaze_score": 8.1, "posture_score": 7.2, "feedback": "..." }
+{ "type": "session_ended",   "report_url": "/api/interviews/{id}/report" }
 ```
+
+### Audio
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/audio/transcribe` | Transcribe audio with Groq Whisper (protected) |
+| GET | `/api/audio/synthesize` | Download interviewer voice audio from Cartesia (protected) |
+
+### Analysis
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/analysis/snapshot` | Submit a webcam snapshot for non-verbal analysis (protected) |
+
+### Health
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Liveness check |
+
+---
+
+## WebSocket Live Interview Loop
+
+1. Candidate speaks → browser records audio
+2. `user_audio` frame sent over WebSocket (base64 WAV)
+3. Server transcribes with **Groq Whisper**
+4. Transcript is moderated and persisted
+5. **Gemini 2.5 Flash** (turn analyzer) decides: follow up / challenge / clarify / switch topic / wrap
+6. **NVIDIA Nemotron** renders the next interviewer utterance naturally
+7. Response is moderated
+8. **Cartesia** generates interviewer voice audio
+9. `ai_reply` frame returned to client with text + audio URL
+
+Background (off the hot path): answer scoring, snapshot analytics, vocal analytics, final report synthesis.
 
 ---
 
 ## Scoring Weights
 
-| Dimension    | Weight |
-|-------------|--------|
-| Content      | 30%    |
-| Clarity      | 15%    |
-| Structure    | 15%    |
-| Pace/Vocal   | 10%    |
-| Eye Contact  | 10%    |
-| Emotion      | 10%    |
-| Posture      | 10%    |
+| Dimension | Weight |
+|---|---|
+| Content | 30% |
+| Clarity | 15% |
+| Structure | 15% |
+| Pace / Vocal | 10% |
+| Eye Contact | 10% |
+| Emotion | 10% |
+| Posture | 10% |
 
 ---
 
 ## Environment Variables
 
-| Variable           | Description                      |
-|--------------------|----------------------------------|
-| `ANTHROPIC_API_KEY` | Your Claude API key (required)  |
+Create a `.env` file in the `files/` directory:
+
+| Variable | Required | Description |
+|---|---|---|
+| `SECRET_KEY` | ✅ | Secret for signing JWT tokens |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (e.g. `postgresql+psycopg://user:pass@host/db`) |
+| `REDIS_URL` | ✅ | Redis connection string (e.g. `redis://localhost:6379/0`) |
+| `GEMINI_API_KEY` | ✅ | Google AI / Gemini API key |
+| `GROQ_API_KEY` | ✅ | Groq API key (STT) |
+| `CARTESIA_API_KEY` | ✅ | Cartesia API key (TTS) |
+| `NVIDIA_API_KEY` | ✅ | NVIDIA NIM API key (live interviewer + moderation) |
+| `APP_ENV` | | `development` / `staging` / `production` (default: `development`) |
+| `GEMINI_REASONING_MODEL` | | Override Gemini model (default: `gemini-2.5-flash`) |
+| `NVIDIA_LIVE_MODEL` | | Override NIM model (default: `nvidia/nemotron-mini-4b-instruct`) |
+| `GROQ_STT_MODEL` | | Override Whisper model (default: `whisper-large-v3-turbo`) |
+| `CARTESIA_MODEL_ID` | | Override Cartesia model (default: `sonic-3`) |
+| `UPLOAD_DIR` | | Resume upload storage path (default: `storage/uploads`) |
 
 ---
 
-## Production Notes
+## Production Checklist
 
-- Replace in-memory `session_store` with Firebase / Redis
-- Add rate limiting (slowapi)
-- Add JWT auth
-- Use Librosa for full audio analysis (speech pace, pitch)
-- Consider ElevenLabs TTS for AI voice responses
-
-- Claude is being used for parsing the resume and generating questions in resume_parser.py, and also for scoring the answers and generating the SWOT report in interview_engine.py
+- [ ] Set `APP_ENV=production` and a strong `SECRET_KEY`
+- [ ] Use a managed PostgreSQL service (e.g. Supabase, RDS, Neon)
+- [ ] Use a managed Redis service (e.g. Upstash, ElastiCache)
+- [ ] Run behind a reverse proxy (nginx / Caddy) with TLS
+- [ ] Add rate limiting (`slowapi`)
+- [ ] Enable structured logging and an observability backend (e.g. Grafana, Datadog)
+- [ ] Set up Alembic auto-migrations in your CI/CD pipeline
 
