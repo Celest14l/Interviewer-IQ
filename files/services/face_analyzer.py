@@ -21,7 +21,7 @@ def _decode_image(b64: str) -> np.ndarray:
         b64 = b64.split(",", 1)[1]
     img_bytes = base64.b64decode(b64)
     arr = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR) #converts the 1d image into 2d image or rgb channel
     if img is None:
         raise ValueError("Could not decode image")
     return img

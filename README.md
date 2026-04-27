@@ -241,3 +241,6 @@ Connect to `ws://localhost:8000/ws/interview/{session_id}`
 - Add JWT auth
 - Use Librosa for full audio analysis (speech pace, pitch)
 - Consider ElevenLabs TTS for AI voice responses
+
+- Claude is being used for parsing the resume and generating questions in resume_parser.py, and also for scoring the answers and generating the SWOT report in interview_engine.py
+

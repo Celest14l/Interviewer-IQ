@@ -75,6 +75,50 @@
   .field input:focus,.field select:focus{border-color:var(--accent);}
   .field input[type="file"]{cursor:none;}
   .field select option{background:#1a1a2e;color:var(--paper);}
+  .account-banner{
+    margin-bottom:1.4rem;
+    padding:1rem 1.1rem;
+    border:1px solid var(--border);
+    background:rgba(245,242,235,0.03);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:1rem;
+  }
+  .account-meta{
+    min-width:0;
+  }
+  .account-label{
+    display:block;
+    font-family:'DM Mono',monospace;
+    font-size:0.68rem;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin-bottom:0.35rem;
+  }
+  .account-value{
+    font-size:0.88rem;
+    color:var(--paper);
+    word-break:break-word;
+  }
+  .account-action{
+    flex-shrink:0;
+    height:38px;
+    padding:0 1rem;
+    border:1px solid var(--border);
+    background:transparent;
+    color:var(--muted);
+    font-family:'DM Mono',monospace;
+    font-size:0.72rem;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    cursor:none;
+  }
+  .account-action:hover{
+    border-color:var(--paper);
+    color:var(--paper);
+  }
 
   /* File drop */
   .file-drop{
@@ -600,7 +644,15 @@
   <div class="setup-card">
     <div class="setup-logo">Interview<span>IQ</span></div>
     <h2>SETUP YOUR<br>SESSION</h2>
-    <p>Upload your resume and choose your interviewer persona to begin.</p>
+    <p>Upload your resume, choose a role and persona, and launch your live interview workspace.</p>
+
+    <div class="account-banner">
+      <div class="account-meta">
+        <span class="account-label">Signed In</span>
+        <div class="account-value" id="accountSummary">Checking your session…</div>
+      </div>
+      <button type="button" class="account-action" id="signOutBtn">Sign Out</button>
+    </div>
 
     <div class="field">
       <label>Resume (PDF)</label>
@@ -833,21 +885,134 @@
 // ══════════════════════════════════════════════════════
 //  CONFIG
 // ══════════════════════════════════════════════════════
-const API_BASE = 'http://localhost:8000';
-let sessionId = null;
+const API_BASE = window.location.origin.startsWith('http') && !window.location.origin.startsWith('file:')
+  ? window.location.origin.replace(/\/$/, '')
+  : 'http://127.0.0.1:8091';
+const WS_BASE = API_BASE.replace(/^http/, 'ws');
+const STORAGE_KEYS = {
+  token: 'interviewiq.auth.token',
+  email: 'interviewiq.guest.email',
+  password: 'interviewiq.guest.password',
+};
+
+let interviewId = null;
+let authToken = null;
 let mediaStream = null;
+let mediaRecorder = null;
 let isRecording = false;
 let isMuted = false;
 let isCamOff = false;
-let snapshotInterval = null;
 let timerInterval = null;
 let secondsElapsed = 0;
-let questionIndex = 0;
 let totalQuestions = 8;
-let speechRecognition = null;
 let snapshotCountdown = 4;
 let snapshotTimer = null;
 let lastScores = {content:null,clarity:null,structure:null};
+let realtimeSocket = null;
+let roleName = '';
+let personaName = '';
+let answerDraftStartedAt = null;
+const renderedTurnIds = new Set();
+
+function buildGuestIdentity() {
+  let email = localStorage.getItem(STORAGE_KEYS.email);
+  let password = localStorage.getItem(STORAGE_KEYS.password);
+  const hasValidEmail = typeof email === 'string' && email.endsWith('@example.com');
+  const hasValidPassword = typeof password === 'string' && password.length >= 8;
+  if (!hasValidEmail || !hasValidPassword) {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    email = `guest_${suffix}@example.com`;
+    password = `InterviewIQ!${suffix}${Date.now().toString().slice(-4)}`;
+    localStorage.setItem(STORAGE_KEYS.email, email);
+    localStorage.setItem(STORAGE_KEYS.password, password);
+  }
+  return { email, password };
+}
+
+async function parseError(response) {
+  try {
+    const payload = await response.json();
+    return payload.detail || payload.message || JSON.stringify(payload);
+  } catch {
+    return `${response.status} ${response.statusText}`;
+  }
+}
+
+async function apiFetch(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (authToken) {
+    headers.set('Authorization', `Bearer ${authToken}`);
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return response;
+}
+
+async function ensureAuthToken() {
+  if (authToken) return authToken;
+
+  const cached = localStorage.getItem(STORAGE_KEYS.token);
+  if (cached) {
+    authToken = cached;
+    try {
+      await apiFetch('/api/auth/me');
+      return authToken;
+    } catch {
+      localStorage.removeItem(STORAGE_KEYS.token);
+      authToken = null;
+    }
+  }
+
+  const creds = buildGuestIdentity();
+  try {
+    await fetch(`${API_BASE}/api/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: creds.email,
+        password: creds.password,
+        full_name: 'InterviewIQ Candidate',
+      }),
+    });
+  } catch {
+    // Existing guest user is fine.
+  }
+
+  const loginResponse = await fetch(`${API_BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: creds.email,
+      password: creds.password,
+    }),
+  });
+
+  if (!loginResponse.ok) {
+    throw new Error(await parseError(loginResponse));
+  }
+
+  const loginData = await loginResponse.json();
+  authToken = loginData.access_token;
+  localStorage.setItem(STORAGE_KEYS.token, authToken);
+  return authToken;
+}
+
+function humanizePersona(value) {
+  return {
+    friendly_hr: 'Friendly HR',
+    strict_technical: 'Strict Technical',
+    stress_interviewer: 'Stress Tester',
+    placement_panel: 'Campus Panel',
+  }[value] || value;
+}
 
 // Demo mode (works without backend)
 let demoMode = false;
@@ -1445,6 +1610,955 @@ function generateDemoReport(){
 //  UTILS
 // ══════════════════════════════════════════════════════
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+</script>
+<script>
+(() => {
+  const currentOrigin = window.location.origin.replace(/\/$/, '');
+  const API_ROOT = (
+    currentOrigin &&
+    !window.location.origin.startsWith('file:') &&
+    /:(8091)$/.test(currentOrigin)
+  )
+    ? currentOrigin
+    : 'http://127.0.0.1:8091';
+  const WS_ROOT = API_ROOT.replace(/^http/, 'ws');
+  const STORAGE_KEYS = {
+    token: 'interviewiq.auth.token',
+    email: 'interviewiq.auth.email',
+    fullName: 'interviewiq.auth.fullName',
+  };
+
+  const state = {
+    interviewId: null,
+    authToken: null,
+    socket: null,
+    mediaStream: null,
+    mediaRecorder: null,
+    assistantAudio: null,
+    pendingAssistantAudioUrl: null,
+    pendingAssistantAudioObjectUrl: null,
+    voicePlaybackEnabled: true,
+    voicePrimed: false,
+    isRecording: false,
+    isMuted: false,
+    isCamOff: false,
+    timerInterval: null,
+    snapshotTimer: null,
+    secondsElapsed: 0,
+    totalQuestions: 8,
+    snapshotCountdown: 4,
+    roleName: '',
+    personaName: '',
+    answerDraftStartedAt: null,
+    renderedTurnIds: new Set(),
+  };
+
+  function updateAccountSummary(text) {
+    const el = document.getElementById('accountSummary');
+    if (el) {
+      el.textContent = text;
+    }
+  }
+
+  async function parseError(response) {
+    try {
+      const payload = await response.json();
+      return payload.detail || payload.message || JSON.stringify(payload);
+    } catch {
+      return `${response.status} ${response.statusText}`;
+    }
+  }
+
+  async function apiFetch(path, options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (state.authToken) {
+      headers.set('Authorization', `Bearer ${state.authToken}`);
+    }
+    const response = await fetch(`${API_ROOT}${path}`, { ...options, headers });
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+    return response;
+  }
+
+  async function ensureAuthToken() {
+    if (state.authToken) return state.authToken;
+    const cached = localStorage.getItem(STORAGE_KEYS.token);
+    if (cached) {
+      state.authToken = cached;
+      try {
+        const meResponse = await apiFetch('/api/auth/me');
+        const me = await meResponse.json();
+        const identity = me.full_name || me.email;
+        updateAccountSummary(identity);
+        if (me.full_name) {
+          localStorage.setItem(STORAGE_KEYS.fullName, me.full_name);
+        }
+        localStorage.setItem(STORAGE_KEYS.email, me.email);
+        return state.authToken;
+      } catch {
+        state.authToken = null;
+        localStorage.removeItem(STORAGE_KEYS.token);
+      }
+    }
+    updateAccountSummary('No active session found. Redirecting to sign in…');
+    window.location.href = 'index.html#auth';
+    throw new Error('Please sign in first from the home page.');
+  }
+
+  function humanizePersona(value) {
+    return {
+      friendly_hr: 'Friendly HR',
+      strict_technical: 'Strict Technical',
+      stress_interviewer: 'Stress Tester',
+      placement_panel: 'Campus Panel',
+    }[value] || value;
+  }
+
+  function showLoading() {
+    document.getElementById('setupScreen').style.display = 'none';
+    document.getElementById('loadingScreen').style.display = 'flex';
+  }
+
+  function setLoaderStatus(message, pct) {
+    document.getElementById('loaderStatus').textContent = message;
+    document.getElementById('loaderFill').style.width = `${pct}%`;
+  }
+
+  function showFileName() {
+    const file = document.getElementById('resumeFile').files[0];
+    document.getElementById('fileName').textContent = file ? `Selected: ${file.name}` : '';
+  }
+
+  function resetChat() {
+    const area = document.getElementById('chatArea');
+    [...area.querySelectorAll('.msg')].forEach((node) => node.remove());
+    state.renderedTurnIds.clear();
+  }
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function addMessage(role, text, turnId = null) {
+    const area = document.getElementById('chatArea');
+    const typing = document.getElementById('typingIndicator');
+    const node = document.createElement('div');
+    node.className = `msg ${role === 'assistant' ? 'ai' : role}`;
+    if (turnId) node.dataset.turnId = turnId;
+    node.innerHTML = `
+      <div class="msg-header">${role === 'assistant' ? 'AI Interviewer' : 'You'}</div>
+      <div class="msg-bubble">${escapeHtml(text)}</div>
+    `;
+    area.insertBefore(node, typing);
+    area.scrollTop = area.scrollHeight;
+  }
+
+  function showTyping() {
+    document.getElementById('typingIndicator').style.display = 'block';
+  }
+
+  function hideTyping() {
+    document.getElementById('typingIndicator').style.display = 'none';
+  }
+
+  function syncProgressFromCount(count) {
+    const current = Math.min(Math.max(count, 1), state.totalQuestions);
+    document.getElementById('qProgress').textContent = `Q ${current} / ${state.totalQuestions}`;
+  }
+
+  function renderTurn(turn) {
+    if (!turn || state.renderedTurnIds.has(turn.id)) return;
+    state.renderedTurnIds.add(turn.id);
+    addMessage(turn.role, turn.content, turn.id);
+    const assistantCount = document.querySelectorAll('#chatArea .msg.ai').length;
+    syncProgressFromCount(assistantCount);
+  }
+
+  function hydrateSession(session) {
+    resetChat();
+    (session?.transcript || []).forEach(renderTurn);
+    const assistantTurns = (session?.transcript || []).filter((turn) => turn.role === 'assistant').length;
+    syncProgressFromCount(assistantTurns);
+  }
+
+  function requireSocket() {
+    if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('The live interview connection is not ready.');
+    }
+  }
+
+  function ensureVoiceButton() {
+    let button = document.getElementById('voiceBtn');
+    if (button) return button;
+
+    const actions = document.querySelector('.topbar-actions');
+    if (!actions) return null;
+
+    button = document.createElement('button');
+    button.className = 'btn-icon';
+    button.id = 'voiceBtn';
+    button.type = 'button';
+    button.title = 'Toggle interviewer voice playback';
+    button.textContent = '🔊';
+    button.onclick = () => {
+      state.voicePlaybackEnabled = !state.voicePlaybackEnabled;
+      updateVoiceButton();
+      if (state.voicePlaybackEnabled && state.pendingAssistantAudioUrl) {
+        playAssistantAudio(state.pendingAssistantAudioUrl).catch((error) => {
+          console.warn('Pending interviewer audio playback failed', error);
+        });
+      }
+    };
+
+    actions.insertBefore(button, document.getElementById('muteBtn'));
+    updateVoiceButton();
+    return button;
+  }
+
+  function updateVoiceButton() {
+    const button = document.getElementById('voiceBtn');
+    if (!button) return;
+    button.classList.toggle('active', !state.voicePlaybackEnabled);
+    if (state.pendingAssistantAudioUrl) {
+      button.textContent = '▶';
+      button.title = state.voicePlaybackEnabled
+        ? 'Replay pending interviewer voice'
+        : 'Voice playback blocked or paused. Click to replay.';
+      return;
+    }
+    button.textContent = state.voicePlaybackEnabled ? '🔊' : '🔇';
+    button.title = state.voicePlaybackEnabled
+      ? 'Interviewer voice playback is enabled'
+      : 'Interviewer voice playback is paused';
+  }
+
+  function ensureAssistantAudio() {
+    if (state.assistantAudio) return state.assistantAudio;
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.onended = () => {
+      state.pendingAssistantAudioUrl = null;
+      updateVoiceButton();
+    };
+    state.assistantAudio = audio;
+    return audio;
+  }
+
+  function createSilentWavUrl() {
+    const sampleRate = 8000;
+    const sampleCount = 800;
+    const bytesPerSample = 2;
+    const dataSize = sampleCount * bytesPerSample;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    const writeAscii = (offset, text) => {
+      for (let i = 0; i < text.length; i += 1) {
+        view.setUint8(offset + i, text.charCodeAt(i));
+      }
+    };
+
+    writeAscii(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeAscii(8, 'WAVE');
+    writeAscii(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * bytesPerSample, true);
+    view.setUint16(32, bytesPerSample, true);
+    view.setUint16(34, 16, true);
+    writeAscii(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+  }
+
+  async function primeVoicePlayback() {
+    if (state.voicePrimed) return true;
+
+    try {
+      const audio = ensureAssistantAudio();
+      const silentUrl = createSilentWavUrl();
+      audio.muted = true;
+      audio.src = silentUrl;
+      audio.load();
+      await audio.play();
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      URL.revokeObjectURL(silentUrl);
+      state.voicePrimed = true;
+      updateVoiceButton();
+      return true;
+    } catch (error) {
+      console.warn('Voice priming failed', error);
+      state.voicePrimed = false;
+      updateVoiceButton();
+      return false;
+    }
+  }
+
+  async function playAssistantAudio(url) {
+    if (!url) return;
+    state.pendingAssistantAudioUrl = url;
+    updateVoiceButton();
+
+    if (!state.voicePlaybackEnabled) {
+      return;
+    }
+
+    const audio = ensureAssistantAudio();
+    audio.pause();
+    audio.muted = false;
+    const response = await apiFetch(url.replace(API_ROOT, ''));
+    const blob = await response.blob();
+    if (state.pendingAssistantAudioObjectUrl) {
+      URL.revokeObjectURL(state.pendingAssistantAudioObjectUrl);
+      state.pendingAssistantAudioObjectUrl = null;
+    }
+    state.pendingAssistantAudioObjectUrl = URL.createObjectURL(blob);
+    audio.src = state.pendingAssistantAudioObjectUrl;
+    audio.load();
+
+    try {
+      await audio.play();
+      state.pendingAssistantAudioUrl = null;
+      updateVoiceButton();
+    } catch (error) {
+      console.warn('Assistant audio playback failed', error);
+      addMessage('assistant', 'Voice playback was blocked by the browser. Click the speaker button in the top bar to replay it.');
+      updateVoiceButton();
+    }
+  }
+
+  async function retryPendingVoicePlayback() {
+    if (!state.pendingAssistantAudioUrl || !state.voicePlaybackEnabled) return;
+    try {
+      await primeVoicePlayback();
+      await playAssistantAudio(state.pendingAssistantAudioUrl);
+    } catch (error) {
+      console.warn('Retrying interviewer voice playback failed', error);
+    }
+  }
+
+  async function maybeSpeakAssistant(text) {
+    if (!text || !state.interviewId) return;
+    try {
+      const response = await apiFetch('/api/audio/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: text,
+          interview_id: state.interviewId,
+          language: 'en',
+        }),
+      });
+      const data = await response.json();
+      await playAssistantAudio(`${API_ROOT}${data.download_url}`);
+    } catch (error) {
+      console.warn('Assistant audio playback failed', error);
+    }
+  }
+
+  async function handleRealtimeEvent(payload) {
+    if (payload.type === 'session_state') {
+      hydrateSession(payload.session);
+      return;
+    }
+    if (payload.type === 'pong') {
+      return;
+    }
+    if (payload.type === 'user_turn' && payload.turn) {
+      hideTyping();
+      renderTurn(payload.turn);
+      if (payload.metadata?.transcription?.text) {
+        updateAnswerScores(payload.metadata.transcription.text);
+      }
+      return;
+    }
+    if (payload.type === 'assistant_turn' && payload.turn) {
+      hideTyping();
+      renderTurn(payload.turn);
+      await maybeSpeakAssistant(payload.turn.content);
+      return;
+    }
+    if (payload.type === 'busy') {
+      hideTyping();
+      addMessage('assistant', payload.message || 'Still processing the previous answer.');
+      return;
+    }
+    if (payload.type === 'error') {
+      hideTyping();
+      addMessage('assistant', payload.message || 'Something went wrong while processing your answer.');
+    }
+  }
+
+  async function connectRealtime() {
+    if (!state.interviewId) {
+      throw new Error('Interview bootstrap did not return an interview id.');
+    }
+    if (!state.authToken) {
+      throw new Error('Authentication token missing.');
+    }
+
+    if (state.socket) {
+      state.socket.close();
+      state.socket = null;
+    }
+
+    const socketUrl = `${WS_ROOT}/api/ws/interviews/${state.interviewId}?token=${encodeURIComponent(state.authToken)}`;
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const socket = new WebSocket(socketUrl);
+      state.socket = socket;
+
+      const timeoutId = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          socket.close();
+          reject(new Error('Timed out while opening the realtime interview.'));
+        }
+      }, 20000);
+
+      socket.onmessage = async (event) => {
+        const payload = JSON.parse(event.data);
+        await handleRealtimeEvent(payload);
+        if (!settled && payload.type === 'session_state') {
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve();
+        }
+      };
+
+      socket.onerror = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeoutId);
+          reject(new Error('Realtime interview connection failed.'));
+        }
+      };
+
+      socket.onclose = (event) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeoutId);
+          reject(new Error(event.reason || 'Realtime interview connection closed.'));
+        } else if (event.code !== 1000) {
+          addMessage('assistant', 'The live interview connection was interrupted.');
+        }
+      };
+    });
+  }
+
+  function startTimer() {
+    clearInterval(state.timerInterval);
+    state.secondsElapsed = 0;
+    state.timerInterval = setInterval(() => {
+      state.secondsElapsed += 1;
+      const m = String(Math.floor(state.secondsElapsed / 60)).padStart(2, '0');
+      const s = String(state.secondsElapsed % 60).padStart(2, '0');
+      document.getElementById('timerDisplay').textContent = `${m}:${s}`;
+    }, 1000);
+  }
+
+  function updateSnapText() {
+    document.getElementById('snapCountText').textContent =
+      state.snapshotCountdown > 0 ? `Snapshot in ${state.snapshotCountdown}s...` : 'Capturing...';
+  }
+
+  function startSnapshotLoop() {
+    clearInterval(state.snapshotTimer);
+    state.snapshotCountdown = 4;
+    updateSnapText();
+    state.snapshotTimer = setInterval(() => {
+      state.snapshotCountdown -= 1;
+      if (state.snapshotCountdown <= 0) {
+        captureAndAnalyze();
+        state.snapshotCountdown = 4;
+      }
+      updateSnapText();
+    }, 1000);
+  }
+
+  function updateBar(barId, labelId, value) {
+    const numeric = parseFloat(value) || 0;
+    const pct = Math.max(0, Math.min(100, Math.round(numeric * 10)));
+    const bar = document.getElementById(barId);
+    bar.style.width = `${pct}%`;
+    bar.className = `mini-bar-fill${pct >= 70 ? '' : pct >= 45 ? ' mid' : ' low'}`;
+    document.getElementById(labelId).textContent = numeric.toFixed(1);
+  }
+
+  function addEmotionLog(emotion, gaze, posture) {
+    const log = document.getElementById('emotionLog');
+    const placeholder = [...log.children].find((node) => node.style.fontSize);
+    if (placeholder) placeholder.remove();
+
+    const entry = document.createElement('div');
+    entry.className = 'emotion-entry';
+    const m = String(Math.floor(state.secondsElapsed / 60)).padStart(2, '0');
+    const s = String(state.secondsElapsed % 60).padStart(2, '0');
+    entry.innerHTML = `
+      <span class="emo-icon">${escapeHtml(emotion)}</span>
+      <span>${escapeHtml(emotion)} · gaze ${gaze} · posture ${posture}</span>
+      <span class="emo-time">${m}:${s}</span>
+    `;
+    log.insertBefore(entry, log.firstChild);
+    while (log.children.length > 12) {
+      log.removeChild(log.lastChild);
+    }
+  }
+
+  function updateFaceUI(data) {
+    const emotion = data.emotion || 'neutral';
+    document.getElementById('camEmotion').textContent = emotion.toUpperCase();
+
+    const gaze = parseFloat(data.gaze_score || 0).toFixed(1);
+    const posture = parseFloat(data.posture_score || 0).toFixed(1);
+    const confidence = parseFloat(data.emotion_confidence || 0).toFixed(1);
+
+    document.getElementById('gazeVal').textContent = gaze;
+    document.getElementById('postureVal').textContent = posture;
+    document.getElementById('emoConf').textContent = confidence;
+
+    updateBar('gazeBar', 'gazeLabel', gaze);
+    updateBar('postureBar', 'postureLabel', posture);
+    updateBar('emoBar', 'emoLabel', confidence);
+
+    const feedbackCard = document.getElementById('faceFeedback');
+    feedbackCard.textContent = data.feedback || 'Keep your delivery steady.';
+    const warning = parseFloat(gaze) < 5 || parseFloat(posture) < 5;
+    feedbackCard.className = `feedback-card${warning ? ' warning' : ''}`;
+
+    addEmotionLog(emotion, gaze, posture);
+  }
+
+  async function captureAndAnalyze() {
+    if (!state.interviewId) return;
+
+    const video = document.getElementById('videoFeed');
+    const canvas = document.getElementById('snapCanvas');
+    if (!video.videoWidth) return;
+
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.scale(-1, 1);
+    ctx.translate(-320, 0);
+    ctx.drawImage(video, 0, 0, 320, 240);
+    ctx.restore();
+    const image = canvas.toDataURL('image/jpeg', 0.7);
+
+    const flash = document.getElementById('snapFlash');
+    flash.classList.add('active');
+    setTimeout(() => flash.classList.remove('active'), 150);
+
+    try {
+      const response = await apiFetch('/api/analysis/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          interview_id: state.interviewId,
+          image,
+        }),
+      });
+      updateFaceUI(await response.json());
+    } catch (error) {
+      console.warn('Snapshot analysis failed', error);
+    }
+  }
+
+  function setScoreCell(id, value) {
+    const el = document.getElementById(id);
+    el.textContent = parseFloat(value).toFixed(1);
+    el.className = `score-cell-val${value >= 7 ? ' good' : value >= 5 ? ' mid' : ' bad'}`;
+  }
+
+  function updateAnswerScores(text) {
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    const sentences = text.split(/[.!?]+/).filter(Boolean).length || 1;
+    const contentScore = Math.min(10, Math.max(3, words / 14 + sentences));
+    const clarityScore = Math.min(10, Math.max(3.5, 5 + Math.min(words, 60) / 18));
+    const structureScore = Math.min(10, Math.max(3, sentences > 2 ? 7.2 : 5.4));
+
+    state.lastScores = {
+      content: contentScore.toFixed(1),
+      clarity: clarityScore.toFixed(1),
+      structure: structureScore.toFixed(1),
+    };
+
+    setScoreCell('contentScore', contentScore);
+    setScoreCell('clarityScore', clarityScore);
+    setScoreCell('structScore', structureScore);
+
+    const elapsed = state.answerDraftStartedAt ? Math.max((performance.now() - state.answerDraftStartedAt) / 1000, 5) : 12;
+    const wpm = Math.round((words / elapsed) * 60);
+    document.getElementById('wpmScore').textContent = Math.min(200, Math.max(0, wpm));
+
+    const overall = ((contentScore * 0.4) + (clarityScore * 0.3) + (structureScore * 0.3)).toFixed(1);
+    document.getElementById('overallScore').textContent = overall;
+    const offset = 283 - (283 * parseFloat(overall) / 10);
+    document.getElementById('ringFill').style.strokeDashoffset = offset;
+  }
+
+  function chooseRecorderMimeType() {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    return candidates.find((type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)) || '';
+  }
+
+  function createAudioRecordingStream(sourceStream) {
+    const audioTracks = sourceStream?.getAudioTracks?.() || [];
+    if (!audioTracks.length) {
+      throw new Error('Microphone audio track is not available. Please re-enable microphone access.');
+    }
+    return new MediaStream(audioTracks);
+  }
+
+  function createMediaRecorderForAudio(sourceStream) {
+    const audioOnlyStream = createAudioRecordingStream(sourceStream);
+    const candidates = [
+      chooseRecorderMimeType(),
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+      '',
+    ].filter((value, index, array) => value === '' || (value && array.indexOf(value) === index));
+
+    for (const mimeType of candidates) {
+      try {
+        return mimeType
+          ? new MediaRecorder(audioOnlyStream, { mimeType })
+          : new MediaRecorder(audioOnlyStream);
+      } catch {
+        // Try the next browser-supported recording flavor.
+      }
+    }
+
+    throw new Error('This browser could not start audio recording. Please type your answer instead.');
+  }
+
+  async function blobToBase64(blob) {
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function averageDimension(scores, key) {
+    const values = scores
+      .map((item) => item.score_payload?.[key]?.score)
+      .filter((value) => typeof value === 'number');
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  function renderReport(report, scores, snapshotSummary) {
+    document.getElementById('interviewUI').style.display = 'none';
+    document.getElementById('reportScreen').style.display = 'flex';
+
+    const m = String(Math.floor(state.secondsElapsed / 60)).padStart(2, '0');
+    const s = String(state.secondsElapsed % 60).padStart(2, '0');
+    document.getElementById('reportMeta').textContent =
+      `Role · ${state.roleName} · ${m}:${s} · ${report.readiness_level}`;
+    document.getElementById('reportFinal').textContent = parseFloat(report.overall_score || 0).toFixed(1);
+
+    const scoreCards = [
+      ['Overall', report.overall_score],
+      ['Relevance', averageDimension(scores, 'relevance')],
+      ['Completeness', averageDimension(scores, 'completeness')],
+      ['Technical', averageDimension(scores, 'technical_correctness')],
+      ['Clarity', averageDimension(scores, 'clarity')],
+      ['Gaze', snapshotSummary?.average_scores?.gaze_score ?? null],
+      ['Posture', snapshotSummary?.average_scores?.posture_score ?? null],
+    ];
+
+    const scoresEl = document.getElementById('reportScores');
+    scoresEl.innerHTML = '';
+    scoreCards.forEach(([label, rawValue]) => {
+      const value = rawValue == null ? '—' : parseFloat(rawValue).toFixed(1);
+      const numeric = rawValue == null ? 0 : parseFloat(rawValue);
+      const color = numeric >= 7 ? 'var(--green)' : numeric >= 5 ? 'var(--accent)' : 'var(--red)';
+      const cell = document.createElement('div');
+      cell.className = 'rs-cell';
+      cell.innerHTML = `<span class="rs-val" style="color:${rawValue == null ? 'var(--muted)' : color}">${value}</span><span class="rs-lbl">${escapeHtml(label)}</span>`;
+      scoresEl.appendChild(cell);
+    });
+
+    const faceSignals = [];
+    if (snapshotSummary?.average_scores?.gaze_score != null) {
+      faceSignals.push(`Average gaze score: ${parseFloat(snapshotSummary.average_scores.gaze_score).toFixed(1)}`);
+    }
+    if (snapshotSummary?.average_scores?.posture_score != null) {
+      faceSignals.push(`Average posture score: ${parseFloat(snapshotSummary.average_scores.posture_score).toFixed(1)}`);
+    }
+    if (snapshotSummary?.average_scores?.emotion_confidence != null) {
+      faceSignals.push(`Emotion confidence: ${parseFloat(snapshotSummary.average_scores.emotion_confidence).toFixed(1)}`);
+    }
+
+    const topicBreakdown = (report.topic_breakdown || []).slice(0, 4).map((topic) => {
+      if (typeof topic === 'string') return topic;
+      return topic.topic || topic.area || JSON.stringify(topic);
+    });
+
+    document.getElementById('swotGrid').innerHTML = `
+      <div class="swot-cell s"><h3>Strengths</h3><ul>${(report.strengths || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
+      <div class="swot-cell w"><h3>Improvement Areas</h3><ul>${(report.improvement_areas || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>
+      <div class="swot-cell o"><h3>Face Signals</h3><ul>${faceSignals.length ? faceSignals.map((item) => `<li>${escapeHtml(item)}</li>`).join('') : '<li>No snapshot metrics captured.</li>'}</ul></div>
+      <div class="swot-cell t"><h3>Topic Breakdown</h3><ul>${topicBreakdown.length ? topicBreakdown.map((item) => `<li>${escapeHtml(item)}</li>`).join('') : '<li>No topic breakdown available.</li>'}</ul></div>
+    `;
+
+    document.getElementById('coachingTips').innerHTML = `<div class="tips-title">Coaching Recommendations</div><div class="tips-list">${
+      (report.coaching_recommendations || []).map((tip, index) => `<div class="tip"><span class="tip-num">${String(index + 1).padStart(2, '0')}</span><span>${escapeHtml(tip)}</span></div>`).join('')
+    }</div>`;
+  }
+
+  window.startSetup = async function startSetupOverride() {
+    ensureVoiceButton();
+    await primeVoicePlayback();
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true;
+    btn.textContent = 'Preparing interview...';
+    showLoading();
+
+    try {
+      setLoaderStatus('Requesting camera and microphone...', 12);
+      state.mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      document.getElementById('videoFeed').srcObject = state.mediaStream;
+
+      const file = document.getElementById('resumeFile').files[0];
+      if (!file) {
+        throw new Error('Please upload your resume PDF before starting.');
+      }
+
+      state.roleName = document.getElementById('roleInput').value.trim() || 'Software Engineer';
+      state.personaName = document.getElementById('personaSelect').value || 'friendly_hr';
+
+      setLoaderStatus('Authenticating candidate session...', 28);
+      await ensureAuthToken();
+
+      setLoaderStatus('Uploading resume and generating interview blueprint...', 54);
+      const formData = new FormData();
+      formData.append('resume', file);
+      formData.append('role', state.roleName);
+      formData.append('persona', state.personaName);
+
+      const bootstrapResponse = await apiFetch('/api/interviews/bootstrap', {
+        method: 'POST',
+        body: formData,
+      });
+      const bootstrap = await bootstrapResponse.json();
+      state.interviewId = bootstrap.interview_id;
+      state.totalQuestions = Math.max(bootstrap.blueprint?.topics?.length || 1, 1);
+
+      setLoaderStatus('Connecting live interview session...', 78);
+      await connectRealtime();
+      setLoaderStatus('Interview ready.', 100);
+
+      document.getElementById('personaBadge').textContent = humanizePersona(state.personaName);
+      launchInterview();
+    } catch (error) {
+      btn.disabled = false;
+      btn.textContent = 'Grant Camera & Mic Access - Begin ->';
+      document.getElementById('loadingScreen').style.display = 'none';
+      document.getElementById('setupScreen').style.display = 'flex';
+      if (state.mediaStream) {
+        state.mediaStream.getTracks().forEach((track) => track.stop());
+        state.mediaStream = null;
+      }
+      alert(`Could not start the interview.\n\n${error.message}`);
+    }
+  };
+
+  function launchInterview() {
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.getElementById('interviewUI').style.display = 'flex';
+    startTimer();
+    startSnapshotLoop();
+  }
+
+  window.sendMessage = async function sendMessageOverride() {
+    await primeVoicePlayback();
+    const input = document.getElementById('textInput');
+    const text = input.value.trim();
+    if (!text) return;
+
+    try {
+      requireSocket();
+      input.value = '';
+      window.autoResize(input);
+      state.answerDraftStartedAt = performance.now();
+      updateAnswerScores(text);
+      showTyping();
+      state.socket.send(JSON.stringify({
+        type: 'user_answer',
+        content: text,
+      }));
+    } catch (error) {
+      hideTyping();
+      addMessage('assistant', error.message);
+    }
+  };
+
+  window.toggleSpeech = function toggleSpeechOverride() {
+    if (!window.MediaRecorder) {
+      alert('Audio recording is not supported in this browser yet. Please type your answer instead.');
+      return;
+    }
+    if (!state.mediaStream) {
+      alert('Camera and microphone are not active.');
+      return;
+    }
+
+    const btn = document.getElementById('micBtn');
+    if (state.isRecording && state.mediaRecorder) {
+      state.mediaRecorder.stop();
+      return;
+    }
+
+    try {
+      requireSocket();
+      primeVoicePlayback().catch(() => {});
+      const chunks = [];
+      state.mediaRecorder = createMediaRecorderForAudio(state.mediaStream);
+
+      state.mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+      state.mediaRecorder.onstop = async () => {
+        state.isRecording = false;
+        btn.classList.remove('recording');
+        btn.textContent = 'Mic';
+        if (!chunks.length) return;
+        showTyping();
+        const blob = new Blob(chunks, { type: state.mediaRecorder.mimeType || 'audio/webm' });
+        const audioBase64 = await blobToBase64(blob);
+        state.socket.send(JSON.stringify({
+          type: 'user_audio',
+          audio_base64: audioBase64,
+          filename: 'answer.webm',
+          content_type: blob.type || 'audio/webm',
+          language: 'en',
+        }));
+      };
+      state.mediaRecorder.onerror = () => {
+        state.isRecording = false;
+        btn.classList.remove('recording');
+        btn.textContent = 'Mic';
+        hideTyping();
+        addMessage('assistant', 'Audio capture failed. Please try again or type your answer.');
+      };
+
+      state.isRecording = true;
+      btn.classList.add('recording');
+      btn.textContent = 'Stop';
+      state.mediaRecorder.start(250);
+    } catch (error) {
+      addMessage('assistant', error.message);
+    }
+  };
+
+  window.toggleMute = function toggleMuteOverride() {
+    state.isMuted = !state.isMuted;
+    state.mediaStream?.getAudioTracks().forEach((track) => {
+      track.enabled = !state.isMuted;
+    });
+    const btn = document.getElementById('muteBtn');
+    btn.textContent = state.isMuted ? 'Muted' : 'Mic On';
+    btn.classList.toggle('active', state.isMuted);
+  };
+
+  window.toggleCamera = function toggleCameraOverride() {
+    state.isCamOff = !state.isCamOff;
+    state.mediaStream?.getVideoTracks().forEach((track) => {
+      track.enabled = !state.isCamOff;
+    });
+    const btn = document.getElementById('camBtn');
+    btn.textContent = state.isCamOff ? 'Cam Off' : 'Cam On';
+    btn.classList.toggle('active', state.isCamOff);
+  };
+
+  window.handleKey = function handleKeyOverride(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      window.sendMessage();
+    }
+  };
+
+  window.autoResize = function autoResizeOverride(el) {
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 100)}px`;
+  };
+
+  window.endInterview = async function endInterviewOverride() {
+    clearInterval(state.timerInterval);
+    clearInterval(state.snapshotTimer);
+    if (state.mediaRecorder && state.isRecording) {
+      state.mediaRecorder.stop();
+    }
+    if (state.socket) {
+      state.socket.close(1000, 'Interview ended');
+      state.socket = null;
+    }
+    state.mediaStream?.getTracks().forEach((track) => track.stop());
+
+    if (!state.interviewId) {
+      alert('No interview session found to report on.');
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/interviews/${state.interviewId}/score`, { method: 'POST' });
+      const scoresResponse = await apiFetch(`/api/interviews/${state.interviewId}/score`);
+      const scores = await scoresResponse.json();
+
+      const reportResponse = await apiFetch(`/api/interviews/${state.interviewId}/report`, { method: 'POST' });
+      const reportEnvelope = await reportResponse.json();
+      const report = reportEnvelope.report;
+
+      let snapshotSummary = null;
+      try {
+        const snapshotResponse = await apiFetch(`/api/analysis/snapshots/${state.interviewId}`);
+        snapshotSummary = await snapshotResponse.json();
+      } catch (error) {
+        console.warn('Snapshot summary unavailable', error);
+      }
+
+      renderReport(report, scores, snapshotSummary);
+    } catch (error) {
+      alert(`Could not generate the report.\n\n${error.message}`);
+    }
+  };
+
+  document.getElementById('resumeFile').addEventListener('change', showFileName);
+  document.getElementById('signOutBtn').addEventListener('click', () => {
+    localStorage.removeItem(STORAGE_KEYS.token);
+    localStorage.removeItem(STORAGE_KEYS.email);
+    localStorage.removeItem(STORAGE_KEYS.fullName);
+    state.authToken = null;
+    window.location.href = 'index.html#auth';
+  });
+  updateAccountSummary(localStorage.getItem(STORAGE_KEYS.fullName) || localStorage.getItem(STORAGE_KEYS.email) || 'Checking your session…');
+  document.addEventListener('pointerdown', () => {
+    retryPendingVoicePlayback().catch(() => {});
+  });
+  document.addEventListener('keydown', () => {
+    retryPendingVoicePlayback().catch(() => {});
+  });
+})();
 </script>
 </body>
 </html>

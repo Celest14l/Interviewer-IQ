@@ -1,0 +1,2 @@
+deepface>=0.0.99
+mediapipe>=0.10.21

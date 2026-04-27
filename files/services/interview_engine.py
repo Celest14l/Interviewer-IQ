@@ -49,7 +49,7 @@ class InterviewEngine:
 
         # Seed conversation with questions context
         self._system = PERSONA_SYSTEM_PROMPTS.get(self.persona, PERSONA_SYSTEM_PROMPTS["friendly_hr"])
-
+    
     # ── Opening message ────────────────────────────────────────────────────
     async def opening(self) -> dict:
         opening_text = (
