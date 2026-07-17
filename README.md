@@ -15,7 +15,6 @@ InterviewIQ is a production-grade AI interview coaching platform that combines L
 - Real-time WebSocket communication
 - SWOT-based performance reports
 - Personalized coaching roadmap
-- Cloud deployment on AWS EC2
 
 ---
 
@@ -53,15 +52,9 @@ Gemini   Whisper   DeepFace   MediaPipe
 
 # Tech Stack
 
-## Cloud & Infrastructure
-- AWS EC2
-- Docker
-- Linux
-- Git
-
 ## Backend
 - FastAPI
-- PostgreSQL
+- Supabase
 - SQLAlchemy
 - Alembic
 - JWT Authentication
